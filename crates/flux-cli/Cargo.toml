@@ -1,0 +1,17 @@
+[package]
+name = "flux-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+
+[[bin]]
+name = "flux"
+path = "src/main.rs"
+
+[dependencies]
+flux-core = { path = "../flux-core" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "io-util", "io-std", "time"] }
+clap = { version = "4", features = ["derive"] }
+async-trait = "0.1"
+hex = "0.4"
+dirs = "5"

@@ -1,0 +1,7 @@
+[workspace]
+members = ["crates/flux-core", "crates/flux-cli", "src-tauri"]
+resolver = "3"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

@@ -1,0 +1,150 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>FLUX — Your files, in motion</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap">
+<style>
+:root{--bg:#fff;--fg:#0a0a0a;--mut:#6b7280;--line:#e6e8ec;--card:#f6f7f9;--logo:none;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);--f:Inter,"Segoe UI Variable","Segoe UI",system-ui,sans-serif}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0a0a0a;--fg:#f5f5f5;--mut:#9ca3af;--line:#262626;--card:#141414;--logo:invert(1)}}
+:root[data-theme="dark"]{--bg:#0a0a0a;--fg:#f5f5f5;--mut:#9ca3af;--line:#262626;--card:#141414;--logo:invert(1)}
+html{scroll-behavior:smooth;scroll-padding-top:calc(72px + env(safe-area-inset-top,0px))}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.55 var(--f);-webkit-font-smoothing:antialiased;overflow-x:hidden}
+img{max-width:100%;display:block}a{color:inherit}
+.wrap{max-width:1160px;margin:0 auto;padding:0 24px}
+nav{position:fixed;top:env(safe-area-inset-top,0px);left:0;right:0;z-index:50;height:64px;display:flex;align-items:center;transition:background .3s,border-color .3s;border-bottom:1px solid transparent}
+nav.s{background:color-mix(in srgb,var(--bg) 82%,transparent);backdrop-filter:blur(14px);border-color:var(--line)}
+nav .wrap{display:flex;align-items:center;justify-content:space-between;width:100%}
+.brand{display:flex;align-items:center;gap:12px;font-weight:600;letter-spacing:.24em;text-decoration:none}.brand img{height:26px;filter:var(--logo)}
+.links{display:flex;align-items:center;gap:26px;font-size:14px}.links a{text-decoration:none;color:var(--mut);transition:color .2s}.links a:hover{color:var(--fg)}
+.btn{display:inline-flex;align-items:center;gap:10px;padding:13px 24px;border-radius:99px;font:600 15px var(--f);text-decoration:none;border:1px solid var(--fg);background:var(--fg);color:var(--bg);cursor:pointer;transition:transform .2s,opacity .2s}
+.btn:hover{transform:translateY(-2px)}.btn.o{background:transparent;color:var(--fg);border-color:var(--line)}.btn.sm{padding:9px 18px;font-size:13px}
+.hero{min-height:100svh;display:grid;place-items:center;text-align:center;padding:120px 0 60px;position:relative;overflow:hidden}
+.hero:before{content:"";position:absolute;inset:0;background:radial-gradient(60% 50% at 50% 38%,color-mix(in srgb,var(--fg) 7%,transparent),transparent 70%)}
+.eyebrow{font-size:13px;letter-spacing:.2em;text-transform:uppercase;color:var(--mut);margin-bottom:22px}
+h1{font-size:clamp(46px,9vw,118px);line-height:.98;letter-spacing:-.045em;margin:0 0 26px;font-weight:800}
+h1 .w{display:inline-block;overflow:hidden;vertical-align:top}h1 .w i{display:inline-block;font-style:normal;transform:translateY(110%);animation:up .9s cubic-bezier(.2,.8,.2,1) forwards;animation-delay:calc(var(--d)*110ms + 150ms)}
+@keyframes up{to{transform:none}}
+.sub{font-size:clamp(17px,2.2vw,22px);color:var(--mut);max-width:620px;margin:0 auto 34px;opacity:0;animation:fade 1s .8s forwards}
+.cta{display:flex;gap:12px;justify-content:center;flex-wrap:wrap;opacity:0;animation:fade 1s 1s forwards}@keyframes fade{to{opacity:1}}
+.cue{position:absolute;bottom:26px;left:50%;width:22px;height:36px;border:2px solid var(--mut);border-radius:12px;transform:translateX(-50%);opacity:.6}.cue:after{content:"";position:absolute;left:50%;top:6px;width:3px;height:7px;margin-left:-1.5px;background:var(--mut);border-radius:2px;animation:wheel 1.6s infinite}
+@keyframes wheel{0%{opacity:1;transform:translateY(0)}100%{opacity:0;transform:translateY(12px)}}
+/* pinned send sequence */
+.seq{height:420vh;position:relative}.stage{position:sticky;top:0;height:100svh;display:flex;flex-direction:column;justify-content:center;overflow:hidden}
+.cap{text-align:center;height:112px;position:relative;margin-bottom:10px}.cap div{position:absolute;inset:0;opacity:0;transform:translateY(16px);transition:opacity .5s,transform .5s}.cap div.on{opacity:1;transform:none}
+.cap b{display:block;font-size:clamp(26px,4.4vw,48px);letter-spacing:-.03em;line-height:1.1}.cap span{color:var(--mut);font-size:clamp(14px,1.6vw,18px)}
+.arena{position:relative;height:min(52vh,460px);width:100%;max-width:1100px;margin:0 auto}
+.dev{position:absolute;border:1px solid var(--line);background:var(--card);box-shadow:0 20px 60px rgba(0,0,0,.08)}
+.laptop{left:2%;top:12%;width:34%;height:72%;border-radius:16px;padding:12px}.phone{right:4%;top:2%;width:19%;height:92%;border-radius:30px;padding:14px 10px}
+.dev h4{margin:0 0 8px;font-size:11px;letter-spacing:.18em;color:var(--mut);font-weight:600}
+.dz{border:1.5px dashed var(--line);border-radius:10px;height:62%;display:grid;place-items:center;font-size:12px;color:var(--mut);text-align:center;padding:8px}
+.got{display:flex;flex-direction:column;gap:6px;margin-top:6px}.got p{margin:0;font-size:11px;display:flex;justify-content:space-between;gap:6px;opacity:0;transform:translateX(10px);transition:.4s;white-space:nowrap;overflow:hidden}.got p.on{opacity:1;transform:none}.got p u{text-decoration:none;color:#16a34a;font-weight:700}
+.lock{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%) scale(.6);opacity:0;transition:.5s;width:64px;height:64px;border-radius:50%;background:var(--fg);color:var(--bg);display:grid;place-items:center;font-size:26px;z-index:5}.lock.on{opacity:1;transform:translate(-50%,-50%) scale(1)}
+.fly{position:absolute;left:0;top:0;width:clamp(78px,11vw,128px);will-change:transform;z-index:4}
+.fly .t{aspect-ratio:1;border-radius:14px;overflow:hidden;background:#fff;border:1px solid var(--line);box-shadow:0 12px 30px rgba(0,0,0,.18);display:grid;place-items:center;position:relative}
+.fly .t img{width:100%;height:100%;object-fit:cover}.fly .t.ic img{object-fit:contain;padding:12%}
+.fly .t.vid:after{content:"▶";position:absolute;inset:auto 6px 6px auto;width:24px;height:24px;border-radius:50%;background:rgba(0,0,0,.65);color:#fff;font-size:10px;display:grid;place-items:center}
+.fly small{display:block;text-align:center;font-size:11px;color:var(--mut);margin-top:6px;white-space:nowrap}
+.pbar{width:min(440px,70%);height:3px;background:var(--line);margin:22px auto 0;border-radius:3px;overflow:hidden}.pbar i{display:block;height:100%;width:0;background:var(--fg)}
+/* sections */
+section.s{padding:130px 0}h2{font-size:clamp(34px,5.6vw,68px);letter-spacing:-.04em;line-height:1.02;margin:0 0 18px;font-weight:800}.lead{color:var(--mut);font-size:clamp(17px,2vw,21px);max-width:640px}
+.rv{opacity:0;transform:translateY(34px);transition:opacity .9s cubic-bezier(.2,.8,.2,1),transform .9s cubic-bezier(.2,.8,.2,1);transition-delay:var(--dl,0s)}.rv.in{opacity:1;transform:none}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:56px}.card{border:1px solid var(--line);background:var(--card);border-radius:22px;padding:28px;transition:transform .3s,border-color .3s}.card:hover{transform:translateY(-4px);border-color:var(--mut)}
+.card h3{margin:14px 0 8px;font-size:20px;letter-spacing:-.02em}.card p{margin:0;color:var(--mut);font-size:15px}.card .n{font-size:13px;font-weight:700;letter-spacing:.14em;color:var(--mut)}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:56px;border-top:1px solid var(--line)}.stats div{padding:34px 0 0}.stats b{font-size:clamp(40px,6vw,76px);letter-spacing:-.04em;line-height:1;display:block}.stats span{color:var(--mut);font-size:14px}
+.strip{overflow:hidden;padding:20px 0}.track{display:flex;gap:16px;width:max-content;will-change:transform}.track div{width:clamp(180px,24vw,300px);aspect-ratio:4/5;border-radius:22px;overflow:hidden;border:1px solid var(--line);background:#fff;display:grid;place-items:center}.track img{width:100%;height:100%;object-fit:cover}.track .ic img{object-fit:contain;padding:14%}
+.black{background:#0a0a0a;color:#f5f5f5;border-radius:36px;margin:0 16px;padding:100px 0}.black .lead,.black .mut{color:#9ca3af}.black .card{background:#141414;border-color:#262626}.black .card p,.black .card .n{color:#9ca3af}
+.road{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:50px}.road div{border-top:2px solid var(--fg);padding-top:16px}.road div.later{border-color:var(--line);color:var(--mut)}.road b{display:block;margin-bottom:6px}.tag{display:block;margin-bottom:14px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--mut)}
+.get{text-align:center}.get .box{max-width:720px;margin:40px auto 0;text-align:left;border:1px solid var(--line);border-radius:22px;background:var(--card);padding:26px}.get pre{margin:10px 0 0;background:var(--bg);border:1px solid var(--line);border-radius:12px;padding:14px;overflow-x:auto;font:13px/1.6 ui-monospace,Consolas,monospace}
+details{margin-top:22px}summary{cursor:pointer;font-weight:600}
+footer{padding:50px 0 70px;color:var(--mut);font-size:14px;border-top:1px solid var(--line);margin-top:120px}
+@media(max-width:860px){.links a:not(.btn){display:none}.grid,.stats,.road{grid-template-columns:1fr}.laptop{width:46%}.phone{width:30%}.black{margin:0 8px;border-radius:26px}section.s{padding:90px 0}}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}h1 .w i,.sub,.cta,.rv{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+<nav id="nav"><div class="wrap"><a class="brand" href="#top"><img src="{{LOGO}}" alt="">FLUX</a><div class="links"><a href="#how">How it works</a><a href="#features">Features</a><a href="#security">Security</a><a class="btn sm" href="#get">Get FLUX</a></div></div></nav>
+
+<header class="hero" id="top"><div class="wrap">
+<div class="eyebrow">Wireless file sharing for Windows</div>
+<h1><span class="w" style="--d:0"><i>Your</i></span> <span class="w" style="--d:1"><i>files,</i></span><br><span class="w" style="--d:2"><i>in</i></span> <span class="w" style="--d:3"><i>motion.</i></span></h1>
+<p class="sub">Move photos, videos, documents and whole folders between your devices over your own network. No cables, no account, no cloud.</p>
+<div class="cta"><a class="btn" href="#get">Get FLUX →</a><a class="btn o" href="#how">See how it works</a></div></div><div class="cue" aria-hidden="true"></div></header>
+
+<div class="seq" id="how"><div class="stage">
+<div class="cap" aria-live="polite">
+<div class="on"><b>Drop anything.</b><span>Photos, video, PDFs, whole folders. Sent exactly as they are.</span></div>
+<div><b>Pick a device.</b><span>Nearby devices appear on their own. You choose who gets it.</span></div>
+<div><b>They approve.</b><span>Nothing lands until the receiver says yes.</span></div>
+<div><b>Verified on arrival.</b><span>Every file is checked, bit for bit, before it appears.</span></div></div>
+<div class="arena" id="arena">
+<div class="dev laptop"><h4>YOUR PC</h4><div class="dz">Drop files here</div></div>
+<div class="dev phone"><h4>PHONE</h4><div class="got" id="got"></div></div>
+<div class="lock" id="lock" aria-hidden="true">✓</div>
+{{FLY}}
+</div><div class="pbar"><i id="pb"></i></div><p style="text-align:center;color:var(--mut);font-size:12px;margin:14px 0 0">Illustration of the experience. Windows-to-Windows works today; phone support is next.</p></div></div>
+
+<section class="s" id="features"><div class="wrap">
+<div class="rv"><div class="tag">Built to be trusted</div><h2>Simple to use.<br>Serious underneath.</h2><p class="lead">FLUX is a real transfer engine, not a pretty wrapper. Here is what it does today.</p></div>
+<div class="grid">
+<div class="card rv"><div class="n">01</div><h3>Any size, tiny memory</h3><p>Files stream in small chunks, so a huge video never fills your RAM.</p></div>
+<div class="card rv" style="--dl:.08s"><div class="n">02</div><h3>Picks up where it stopped</h3><p>Connection drops? FLUX reconnects and resumes from what was already verified.</p></div>
+<div class="card rv" style="--dl:.16s"><div class="n">03</div><h3>Folders stay folders</h3><p>Send a whole project and it arrives with the same structure and names.</p></div>
+<div class="card rv"><div class="n">04</div><h3>Nothing overwritten</h3><p>Same name already there? You get “report (1).pdf”, never a silent replacement.</p></div>
+<div class="card rv" style="--dl:.08s"><div class="n">05</div><h3>Pause, resume, cancel</h3><p>Stop any time and keep your progress, or cancel and leave nothing behind.</p></div>
+<div class="card rv" style="--dl:.16s"><div class="n">06</div><h3>Local-first</h3><p>Files go straight from device to device. No account, no upload, no cloud copy.</p></div></div>
+<div class="stats"><div class="rv"><b data-n="1" data-s=" GB">0</b><span>test file streamed and SHA-256 verified end to end</span></div><div class="rv" style="--dl:.1s"><b data-n="7" data-s=" MB">0</b><span>peak memory per side during that 1 GB transfer</span></div><div class="rv" style="--dl:.2s"><b data-n="0" data-s=" cloud">0</b><span>servers touch your files</span></div></div>
+<p class="mut small" style="color:var(--mut);font-size:13px;margin-top:14px">Measured on a loopback test between two separate FLUX processes. Real-world speed depends on your network.</p>
+</div></section>
+
+<div class="strip" aria-hidden="true"><div class="track" id="track">{{TRACK}}</div></div>
+
+<section class="s" id="security"><div class="black"><div class="wrap">
+<div class="rv"><div class="tag" style="color:#9ca3af">Security</div><h2>Discovery is not trust.</h2><p class="lead">Seeing a device on your network never lets it send you anything.</p></div>
+<div class="grid">
+<div class="card rv"><div class="n">PAIR</div><h3>One-time codes</h3><p>Pairing uses a short-lived, single-use code that is useless once it has been used.</p></div>
+<div class="card rv" style="--dl:.08s"><div class="n">PIN</div><h3>Identity, not IP address</h3><p>Every device has its own cryptographic identity, checked on every connection.</p></div>
+<div class="card rv" style="--dl:.16s"><div class="n">ASK</div><h3>You decide</h3><p>Unknown devices need your approval for each transfer, and you see the files first.</p></div></div></div></div></section>
+
+<section class="s"><div class="wrap"><div class="rv"><div class="tag">Roadmap</div><h2>Where FLUX is going.</h2><p class="lead">We label what exists and what does not.</p></div>
+<div class="road"><div class="rv"><span class="tag">Now · early build</span><b>Windows to Windows</b>Pairing, streaming, resume, desktop app.</div><div class="rv" style="--dl:.08s"><span class="tag">Next</span><b>Phones</b>Browser companion with QR pairing.</div><div class="rv later" style="--dl:.16s"><span class="tag">Later</span><b>FLUX Flow</b>Saved destinations and automatic organizing.</div><div class="rv later" style="--dl:.24s"><span class="tag">Later</span><b>FLUX Vault</b>Search your files across devices.</div></div></div></section>
+
+<section class="s get" id="get"><div class="wrap"><div class="rv"><div class="tag">Get FLUX</div><h2>Try the app.</h2><p class="lead" style="margin:0 auto">FLUX for Windows is an early build. There is no signed installer yet, so for now you run it from source in a few steps.</p></div>
+<div class="box rv"><b>Windows early build</b><p style="color:var(--mut);margin:6px 0 0">Needs Node.js 20+ and Rust (MSVC). Not yet tested on every Windows setup.</p>
+<pre id="cmds">npm install
+npm run tauri build</pre><div style="margin-top:16px;display:flex;gap:10px;flex-wrap:wrap"><a id="dl" class="btn" href="#get" role="button">Copy build commands</a></div>
+<details><summary>What is not ready yet</summary><p style="color:var(--mut)">Phone support, a signed installer, auto-update and FLUX Flow are still in progress. Phones cannot run FLUX yet.</p></details></div></div></section>
+<footer><div class="wrap">© FLUX — Fast. Secure. Connected.</div></footer>
+
+<script>
+const DOWNLOAD_URL="";/* set this to your real installer link and the button becomes a download */
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)],RM=matchMedia("(prefers-reduced-motion:reduce)").matches;
+const nav=$("#nav"),seq=$("#how"),arena=$("#arena"),flies=$$(".fly"),caps=$$(".cap div"),got=$("#got"),lock=$("#lock"),pb=$("#pb"),track=$("#track");
+const clamp=(v,a=0,b=1)=>Math.min(b,Math.max(a,v)),ease=t=>t<.5?4*t*t*t:1-Math.pow(-2*t+2,3)/2;
+flies.forEach(f=>{const p=document.createElement("p");p.innerHTML="<span>"+f.dataset.name+"</span><u>✓</u>";got.appendChild(p);f._p=p});
+function frame(){
+  const y=scrollY;nav.classList.toggle("s",y>20);
+  const r=seq.getBoundingClientRect(),p=RM?1:clamp(-r.top/(r.height-innerHeight));
+  const W=arena.clientWidth,H=arena.clientHeight,n=flies.length;
+  flies.forEach((f,i)=>{
+    const t=ease(clamp((p-.12-i*.09)/.42)),sx=W*(.06+.12*(i%3)),sy=H*(.2+.16*Math.floor(i/3)),ex=W*.80+((i%2)*6),ey=H*(.14+i*.095);
+    const x=sx+(ex-sx)*t,yy=sy+(ey-sy)*t-Math.sin(Math.PI*t)*70,sc=1-.5*t,rot=(1-t)*(i%2?-7:7)+t*0;
+    f.style.transform=`translate(${x}px,${yy}px) scale(${sc}) rotate(${rot}deg)`;f.style.opacity=(p<.06?p/.06:1)*(1-clamp((t-.8)/.18));
+    f._p.classList.toggle("on",t>.97);f.querySelector("small").style.opacity=1-t;
+  });
+  const step=p<.22?0:p<.5?1:p<.74?2:3;caps.forEach((c,i)=>c.classList.toggle("on",i===step));
+  lock.classList.toggle("on",p>.9);pb.style.width=(p*100)+"%";
+  if(track&&!RM){const tr=track.parentElement.getBoundingClientRect(),q=(innerHeight-tr.top)/(innerHeight+tr.height);track.style.transform=`translateX(${-(track.scrollWidth-innerWidth)*clamp(q)}px)`}
+  requestAnimationFrame(frame)}
+requestAnimationFrame(frame);
+const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add("in");io.unobserve(e.target);e.target.querySelectorAll("[data-n]").forEach(c=>count(c))}}),{threshold:.15});
+$$(".rv").forEach(e=>io.observe(e));
+function count(c){const to=+c.dataset.n,s=c.dataset.s;if(RM||to===0){c.textContent=to+s;return}let t0;const d=1400;const st=ts=>{t0??=ts;const k=clamp((ts-t0)/d);c.textContent=Math.round(to*(1-Math.pow(1-k,3)))+s;if(k<1)requestAnimationFrame(st)};requestAnimationFrame(st)}
+$$(".stats [data-n]").forEach(c=>{c.closest(".rv")||0});
+const dl=$("#dl");
+if(DOWNLOAD_URL){dl.textContent="Download for Windows";dl.href=DOWNLOAD_URL;dl.setAttribute("download","")}
+else dl.addEventListener("click",e=>{e.preventDefault();const t=$("#cmds").innerText;(navigator.clipboard?navigator.clipboard.writeText(t):Promise.reject()).then(()=>dl.textContent="Copied ✓").catch(()=>dl.textContent="Select the commands above");setTimeout(()=>dl.textContent="Copy build commands",2000)});
+</script>
+</body>
+</html>
