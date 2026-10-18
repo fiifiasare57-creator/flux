@@ -31,29 +31,28 @@ jobs:
         uses: android-actions/setup-android@v4
 
       - name: Make gradlew executable
-        working-directory: android
         run: chmod +x ./gradlew
 
       - name: Build debug APK
-        working-directory: android
         run: ./gradlew assembleDebug --no-daemon --stacktrace
 
       - name: Verify APK
         run: |
-          APK="android/app/build/outputs/apk/debug/app-debug.apk"
-          if [ ! -f "$APK" ]; then
+          APK=$(find . -path "*/build/outputs/apk/debug/*.apk" -type f | head -n 1)
+          if [ -z "$APK" ]; then
             echo "::error::APK was not generated."
-            find android -type f -name "*.apk" -print || true
+            find . -type f -name "*.apk" -print || true
             exit 1
           fi
-          echo "APK generated successfully."
+          echo "APK found: $APK"
           ls -lh "$APK"
           sha256sum "$APK"
+          echo "APK_PATH=$APK" >> $GITHUB_ENV
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: flux-android-debug-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.APK_PATH }}
           if-no-files-found: error
           retention-days: 14
