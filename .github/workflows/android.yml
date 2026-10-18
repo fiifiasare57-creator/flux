@@ -17,10 +17,6 @@ jobs:
     name: Build FLUX Android APK
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: android
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
@@ -30,41 +26,38 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
 
-      - name: Check Gradle wrapper
-        run: |
-          if [ ! -f "./gradlew" ]; then
-            echo "::error::Gradle wrapper not found in android/"
-            exit 1
-          fi
-          chmod +x ./gradlew
+      - name: Install Gradle 8.7
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.7"
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+        working-directory: android
+        run: gradle assembleDebug --no-daemon --stacktrace
 
       - name: Verify APK
+        shell: bash
         run: |
-          APK=$(find . -type f -path "*/build/outputs/apk/debug/*.apk" | head -n 1)
+          APK="android/app/build/outputs/apk/debug/app-debug.apk"
 
-          if [ -z "$APK" ]; then
+          if [ ! -f "$APK" ]; then
             echo "::error::APK was not generated."
-            find . -type f -name "*.apk" -print || true
+            find android -type f -name "*.apk" -print || true
             exit 1
           fi
 
           echo "APK generated successfully."
           ls -lh "$APK"
           sha256sum "$APK"
-          echo "APK_PATH=$APK" >> "$GITHUB_ENV"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: flux-android-debug-apk
-          path: android/${{ env.APK_PATH }}
+          path: android/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
           retention-days: 14
