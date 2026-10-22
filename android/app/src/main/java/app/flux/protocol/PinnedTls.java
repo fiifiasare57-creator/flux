@@ -25,9 +25,10 @@ public final class PinnedTls {
     }
 
     private static final class Pin extends X509ExtendedTrustManager {
-        final String expected;
-        Pin(String expected) { this.expected = expected.toLowerCase(); }
+        final String expected;   // null = accept any certificate (short-code pairing authenticates via the code instead)
+        Pin(String expected) { this.expected = expected == null ? null : expected.toLowerCase(); }
         void check(X509Certificate[] chain) throws CertificateException {
+            if (expected == null) return;
             try {
                 if (chain == null || chain.length == 0 || !fingerprint(chain[0].getEncoded()).equals(expected))
                     throw new CertificateException("device identity does not match the pinned fingerprint");
@@ -42,6 +43,11 @@ public final class PinnedTls {
         @Override public X509Certificate[] getAcceptedIssuers() { return new X509Certificate[0]; }
     }
 
+    /** Server certificate fingerprint of an established connection. */
+    public static String serverFingerprint(SSLSocket s) throws Exception {
+        return fingerprint(((X509Certificate) s.getSession().getPeerCertificates()[0]).getEncoded());
+    }
+
     public static SSLSocket connect(KeyManager[] keys, String hostPort, String expectedFp, int timeoutMs) throws FluxException {
         int c = hostPort.lastIndexOf(':');
         if (c <= 0) throw new FluxException(FluxException.Kind.NETWORK, "bad address " + hostPort);
@@ -49,15 +55,18 @@ public final class PinnedTls {
         int port;
         try { port = Integer.parseInt(hostPort.substring(c + 1)); } catch (NumberFormatException e) { throw new FluxException(FluxException.Kind.NETWORK, "bad port"); }
         SSLSocket s = null;
+        Trace.step("tls: connecting to " + hostPort);
         try {
             SSLContext ctx = SSLContext.getInstance("TLSv1.3");
             ctx.init(keys, new TrustManager[]{new Pin(expectedFp)}, new SecureRandom());
             s = (SSLSocket) ctx.getSocketFactory().createSocket();
             s.setTcpNoDelay(true);
             s.connect(new InetSocketAddress(host, port), timeoutMs);
+            Trace.step("tls: tcp connected, starting handshake");
             s.setSoTimeout(30_000);
             s.setEnabledProtocols(new String[]{"TLSv1.3"});
             s.startHandshake();
+            Trace.step("tls: handshake complete");
             return s;
         } catch (SSLException e) {
             close(s);

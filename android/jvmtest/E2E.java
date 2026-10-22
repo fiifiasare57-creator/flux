@@ -46,9 +46,11 @@ public class E2E {
     interface Runnable2 { void run() throws Exception; }
 
     public static void main(String[] a) throws Exception {
-        String link = a[0], recvDir = a[1], p12a = a[2], p12b = a[3], pcOutFile = a[4];
+        String link = a[0], recvDir = a[1], p12a = a[2], p12b = a[3], pcOutFile = a[4], code2 = a[5], addr2 = a[6];
         Path work = Files.createTempDirectory("fluxsrc");
-        FluxClient phone = new FluxClient(keys(p12a), "Test Phone", "phone");
+        java.io.File softDir = new java.io.File(work.toFile(), "soft-identity");
+        FluxClient phone = new FluxClient(SoftIdentity.load(softDir), "Test Phone", "phone");
+        check("software identity is created, persisted and stable across restarts", SoftIdentity.fingerprint(softDir).matches("[0-9a-f]{64}") && SoftIdentity.fingerprint(softDir).equals(PinnedTls.fingerprint(java.nio.file.Files.readAllBytes(new java.io.File(softDir, "identity.crt").toPath()))) && SoftIdentity.fingerprint(softDir).equals(SoftIdentity.fingerprint(softDir)));
         PairingLink pl = PairingLink.parse(link);
 
         // impostor: same address, wrong pinned fingerprint
@@ -113,6 +115,14 @@ public class E2E {
         check("after delivery the queue is empty (peek returns nothing)", phone.peek(pr.addr, pr.fingerprint) == null);
         check("path sanitiser rejects traversal and keeps normal folders", FluxClient.safePath("../x") == null && FluxClient.safePath("/etc/passwd") == null && "Docs/a b.pdf".equals(FluxClient.safePath("Docs/a b.pdf")) && "a_b".equals(FluxClient.safePath("a:b")));
 
+        // ---------------- short-code pairing against a second PC (fresh identity, no prior trust)
+        java.io.File dir3 = new java.io.File(work.toFile(), "soft-identity-3");
+        FluxClient p3 = new FluxClient(SoftIdentity.load(dir3), SoftIdentity.fingerprint(dir3), "Code Phone", "phone");
+        check("a malformed code is rejected before touching the network", kindOf(() -> p3.pairWithCode("nope", java.util.List.of(addr2))) == FluxException.Kind.PAIRING);
+        check("a wrong code is refused by the PC", kindOf(() -> p3.pairWithCode("ABC-DEF-GHJ", java.util.List.of(addr2))) == FluxException.Kind.PAIRING);
+        PairResult c = p3.pairWithCode(code2.toLowerCase(), java.util.List.of("127.0.0.1:1", addr2));
+        check("the 9-character code pairs (identity learned and proven, skipping a dead address)", c.fingerprint.matches("[0-9a-f]{64}") && c.addr.equals(addr2));
+        check("the code works only once", kindOf(() -> new FluxClient(SoftIdentity.load(new java.io.File(work.toFile(), "soft-identity-4")), SoftIdentity.fingerprint(new java.io.File(work.toFile(), "soft-identity-4")), "Late", "phone").pairWithCode(code2, java.util.List.of(addr2))) == FluxException.Kind.PAIRING);
         System.out.println("\n" + pass + " passed, " + fail + " failed");
         System.exit(fail == 0 ? 0 : 1);
     }

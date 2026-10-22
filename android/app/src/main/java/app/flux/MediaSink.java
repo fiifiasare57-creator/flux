@@ -21,6 +21,10 @@ final class MediaSink implements ReceiveSink {
     private static final Uri DOWNLOADS = Uri.parse("content://media/external/downloads"); // == MediaStore.Downloads.EXTERNAL_CONTENT_URI (API 29)
     private final ContentResolver cr;
     private final Map<String, Uri> open = new HashMap<>();
+    private final Map<String, String> saved = new java.util.LinkedHashMap<>();
+
+    /** relative path -> content URI of every file that was verified and committed. */
+    Map<String, String> saved() { return saved; }
 
     MediaSink(ContentResolver cr) { this.cr = cr; }
 
@@ -47,6 +51,7 @@ final class MediaSink implements ReceiveSink {
         if (uri == null) throw new IOException("nothing to commit for " + relPath);
         ContentValues v = new ContentValues(); v.put("is_pending", 0);
         if (cr.update(uri, v, null, null) < 1) throw new IOException("couldn't publish " + relPath);
+        saved.put(relPath, uri.toString());
     }
 
     @Override public void abort(String relPath) {

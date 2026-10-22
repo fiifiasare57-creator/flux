@@ -43,6 +43,7 @@ final class UriSource implements SourceFile {
         return new UriSource(cr, uri, name, size);
     }
 
+    Uri uri() { return uri; }
     @Override public String relPath() { return name; }
     @Override public long size() { return size; }
     @Override public long mtimeSeconds() { return 0; }
