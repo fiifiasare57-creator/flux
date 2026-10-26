@@ -153,6 +153,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("Fingerprint: {}", node.fingerprint());
             let offer = node.begin_pairing_with_addrs(flux_core::discovery::lan_addrs(port), Some(Duration::from_secs(pair_ttl)));
             println!("\nPairing link (valid {}s, single use):\n{}\n", offer.expires_in.as_secs(), offer.uri);
+            println!("Pairing code: {}\n", offer.code);
             let disc = if !no_discovery && settings.discoverable {
                 match Discovery::new().and_then(|d| d.advertise(&settings.device_name, port, node.fingerprint(), DeviceType::Desktop).map(|_| d)) {
                     Ok(d) => { println!("Advertising on the local network (mDNS)."); Some(d) }

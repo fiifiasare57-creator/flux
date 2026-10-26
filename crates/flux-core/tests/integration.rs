@@ -75,7 +75,7 @@ impl Peer {
 }
 
 fn fast_limits() -> Limits {
-    Limits { idle_timeout: Duration::from_secs(5), handshake_timeout: Duration::from_secs(5), approval_timeout: Duration::from_secs(5), ..Limits::default() }
+    Limits { share_bind: "127.0.0.1:0".parse().unwrap(), idle_timeout: Duration::from_secs(5), handshake_timeout: Duration::from_secs(5), approval_timeout: Duration::from_secs(5), ..Limits::default() }
 }
 fn quick_retry() -> RetryPolicy { RetryPolicy { max_attempts: 5, backoff: Duration::from_millis(50) } }
 
@@ -896,4 +896,196 @@ async fn presence_requires_a_recent_authenticated_contact_and_survives_overlap()
     for _ in 0..20 { let mut c = raw_fetch(&p.pc, &p.id).await; tasks.push(tokio::spawn(async move { let _ = read_msg(&mut c, Duration::from_secs(5)).await; })); }
     for t in tasks { t.await.unwrap(); }
     assert!(p.pc.node.is_online(&fp), "check-in brings the phone back online");
+}
+
+// ---------------------------------------------------------------- short-code pairing
+
+#[tokio::test(flavor = "multi_thread")]
+async fn short_code_pairs_both_ways_and_is_single_use() {
+    let pc = Peer::new("PC", Arc::new(RejectAll), fast_limits()).listening().await;
+    let phone = Peer::new("Phone", Arc::new(RejectAll), fast_limits());
+    let addr = pc.addr.unwrap().to_string();
+    let offer = pc.node.begin_pairing_with_addrs(vec![addr.clone()], None);
+    assert_eq!(offer.code.len(), 11, "XXX-XXX-XXX");
+    let dev = phone.node.pair_with_code(&offer.code.to_lowercase(), &[addr.clone()]).await.unwrap();
+    assert_eq!(dev.fingerprint, pc.node.fingerprint());
+    assert!(pc.node.store().get_trusted(phone.node.fingerprint()).is_some(), "the PC trusts the phone");
+    assert!(phone.node.store().get_trusted(pc.node.fingerprint()).is_some(), "the phone trusts the PC (identity learned and proven)");
+    let other = Peer::new("Other", Arc::new(RejectAll), fast_limits());
+    assert!(other.node.pair_with_code(&offer.code, &[addr]).await.is_err(), "a code works once");
+    assert!(pc.node.store().get_trusted(other.node.fingerprint()).is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn wrong_malformed_and_expired_codes_are_refused_and_guessing_burns_the_code() {
+    let pc = Peer::new("PC", Arc::new(RejectAll), fast_limits()).listening().await;
+    let phone = Peer::new("Phone", Arc::new(RejectAll), fast_limits());
+    let addr = pc.addr.unwrap().to_string();
+    let offer = pc.node.begin_pairing_with_addrs(vec![addr.clone()], None);
+    assert!(phone.node.pair_with_code("ABC-DEF-GHJ", &[addr.clone()]).await.is_err());
+    assert!(phone.node.pair_with_code("too short", &[addr.clone()]).await.is_err());
+    for _ in 0..5 { let _ = phone.node.pair_with_code("ABC-DEF-GHJ", &[addr.clone()]).await; }
+    assert!(phone.node.pair_with_code(&offer.code, &[addr.clone()]).await.is_err(), "five wrong guesses burn the real code too");
+    let short = pc.node.begin_pairing_with_addrs(vec![addr.clone()], Some(Duration::from_millis(1)));
+    tokio::time::sleep(Duration::from_millis(30)).await;
+    assert!(phone.node.pair_with_code(&short.code, &[addr]).await.is_err(), "expired");
+    assert!(pc.node.store().get_trusted(phone.node.fingerprint()).is_none());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_impostor_that_does_not_know_the_code_is_never_trusted() {
+    // A malicious "PC": valid TLS, accepts the connection, answers PairOk with a made-up proof.
+    let impostor_id = Identity::generate().unwrap();
+    let acceptor = tls::acceptor(&impostor_id).unwrap();
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap().to_string();
+    tokio::spawn(async move {
+        let (tcp, _) = l.accept().await.unwrap();
+        let mut s = acceptor.accept(tcp).await.unwrap();
+        let _ = read_msg(&mut s, Duration::from_secs(5)).await;   // Hello
+        let _ = read_msg(&mut s, Duration::from_secs(5)).await;   // proof (it cannot verify it: it does not know the code)
+        let _ = write_msg(&mut s, &Msg::PairOk { device_name: "Totally Your PC".into(), device_type: DeviceType::Desktop, proof: Some("00".repeat(32)) }).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    });
+    let phone = Peer::new("Phone", Arc::new(RejectAll), fast_limits());
+    let r = phone.node.pair_with_code("K7M-2QX-9R4", &[addr]).await;
+    assert!(matches!(r, Err(flux_core::FluxError::Pairing(_))), "{r:?}");
+    assert!(phone.node.store().trusted().is_empty(), "nothing may be trusted when the server cannot prove the code");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn short_code_tries_every_candidate_and_skips_devices_that_are_not_flux() {
+    let pc = Peer::new("PC", Arc::new(RejectAll), fast_limits()).listening().await;
+    let phone = Peer::new("Phone", Arc::new(RejectAll), fast_limits());
+    let junk = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let junk_addr = junk.local_addr().unwrap().to_string();
+    tokio::spawn(async move { loop { if let Ok((mut s, _)) = junk.accept().await { let _ = tokio::io::AsyncWriteExt::write_all(&mut s, b"HTTP/1.1 400 Bad\r\n\r\n").await; } } });
+    let addr = pc.addr.unwrap().to_string();
+    let offer = pc.node.begin_pairing_with_addrs(vec![addr.clone()], None);
+    let dev = phone.node.pair_with_code(&offer.code, &["127.0.0.1:1".to_string(), junk_addr, addr]).await.unwrap();
+    assert_eq!(dev.fingerprint, pc.node.fingerprint());
+}
+
+// ---------------------------------------------------------------- share links (HTTP)
+
+async fn http(port: u16, req: &str) -> (u16, String, Vec<u8>) {
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    s.write_all(req.as_bytes()).await.unwrap();
+    let mut all = Vec::new();
+    tokio::time::timeout(Duration::from_secs(10), s.read_to_end(&mut all)).await.expect("response").unwrap();
+    let split = all.windows(4).position(|w| w == b"\r\n\r\n").expect("head");
+    let head = String::from_utf8_lossy(&all[..split]).to_string();
+    let status: u16 = head.split(' ').nth(1).unwrap().parse().unwrap();
+    (status, head, all[split + 4..].to_vec())
+}
+/// Like `http` but tolerates the listener having been closed (no active links = no open port).
+async fn try_http(port: u16, req: &str) -> Option<u16> {
+    let mut s = tokio::net::TcpStream::connect(("127.0.0.1", port)).await.ok()?;
+    s.write_all(req.as_bytes()).await.ok()?;
+    let mut all = Vec::new();
+    s.read_to_end(&mut all).await.ok()?;
+    String::from_utf8_lossy(&all).split(' ').nth(1)?.parse().ok()
+}
+fn get(path: &str) -> String { format!("GET {path} HTTP/1.1\r\nHost: x\r\n\r\n") }
+async fn share_of(p: &Peer, paths: Vec<PathBuf>, ttl: Duration, max: Option<u32>) -> flux_core::share::ShareInfo {
+    let files = send::collect(paths, 100).await.unwrap();
+    p.node.create_share(files, ttl, max).await.unwrap()
+}
+fn plain() -> Peer { Peer::new("PC", Arc::new(RejectAll), fast_limits()) }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn share_link_serves_page_downloads_ranges_and_head() {
+    let p = plain();
+    let src = tempfile::tempdir().unwrap();
+    let a = random_file(src.path(), "photo.jpg", 1_000_003);
+    random_file(src.path(), "Docs/notes.pdf", 5_000);
+    let sh = share_of(&p, vec![a.clone(), src.path().join("Docs")], Duration::from_secs(60), None).await;
+    assert_eq!(sh.token.len(), 9);
+    let (st, head, body) = http(sh.port, &get(&format!("/{}", sh.token))).await;
+    let page = String::from_utf8_lossy(&body);
+    assert!(st == 200 && page.contains("photo.jpg") && page.contains("Docs/notes.pdf") && page.contains("2 files"), "{st} {page}");
+    assert!(head.contains("X-Content-Type-Options: nosniff") && head.contains("Cache-Control: no-store") && head.contains("Content-Security-Policy"));
+    // files are sorted by relative path: Docs/notes.pdf is 0, photo.jpg is 1
+    let (st, head, body) = http(sh.port, &get(&format!("/{}/1", sh.token))).await;
+    assert_eq!(st, 200);
+    assert_eq!(body, std::fs::read(&a).unwrap(), "download is byte-identical");
+    assert!(head.contains("Content-Length: 1000003") && head.contains("attachment") && head.contains("photo.jpg") && head.contains("application/octet-stream"));
+    let (st, head, body) = http(sh.port, &format!("GET /{}/1 HTTP/1.1\r\nRange: bytes=10-19\r\n\r\n", sh.token)).await;
+    assert_eq!(st, 206);
+    assert_eq!(body, std::fs::read(&a).unwrap()[10..20].to_vec());
+    assert!(head.contains("Content-Range: bytes 10-19/1000003"));
+    let (st, _, body) = http(sh.port, &format!("GET /{}/1 HTTP/1.1\r\nRange: bytes=-5\r\n\r\n", sh.token)).await;
+    assert_eq!((st, body), (206, std::fs::read(&a).unwrap()[1_000_003 - 5..].to_vec()));
+    let (st, _, _) = http(sh.port, &format!("GET /{}/1 HTTP/1.1\r\nRange: bytes=99999999-\r\n\r\n", sh.token)).await;
+    assert_eq!(st, 416);
+    let (st, head, body) = http(sh.port, &format!("HEAD /{}/1 HTTP/1.1\r\n\r\n", sh.token)).await;
+    assert!(st == 200 && body.is_empty() && head.contains("Content-Length: 1000003"));
+    let (st, _, _) = http(sh.port, &format!("POST /{} HTTP/1.1\r\nContent-Length: 0\r\n\r\n", sh.token)).await;
+    assert_eq!(st, 405);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn share_link_escapes_names_and_never_leaks_through_bad_paths() {
+    let p = plain();
+    let src = tempfile::tempdir().unwrap();
+    let evil = random_file(src.path(), "<img src=x onerror=alert(1)>.html", 50);
+    let sh = share_of(&p, vec![evil], Duration::from_secs(60), None).await;
+    let (_, _, body) = http(sh.port, &get(&format!("/{}", sh.token))).await;
+    let page = String::from_utf8_lossy(&body).to_string();
+    assert!(!page.contains("<img src=x") && page.contains("&lt;img"), "file names must be HTML-escaped");
+    let (st, head, _) = http(sh.port, &get(&format!("/{}/0", sh.token))).await;
+    assert!(st == 200 && head.contains("attachment") && head.contains("application/octet-stream"), "an html file must download, never render");
+    let t = &sh.token;
+    let mut bodies = std::collections::HashSet::new();
+    for path in ["/", "/abcdefghj", "/short", &format!("/{t}/9"), &format!("/{t}/abc"), &format!("/{t}/../x"), &format!("/{t}//0"), &format!("/{t}/0/x"), "/..%2f..%2fetc%2fpasswd", &format!("/{t}/-1")] {
+        let (st, _, body) = http(sh.port, &get(path)).await;
+        assert!(st == 404 || st == 400, "{path} -> {st}");
+        bodies.insert(String::from_utf8_lossy(&body).to_string());
+    }
+    assert_eq!(bodies.len(), 1, "every miss looks identical");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn share_link_expiry_revoke_download_limit_and_listener_lifecycle() {
+    let p = plain();
+    let src = tempfile::tempdir().unwrap();
+    let f = random_file(src.path(), "a.bin", 300_000);
+    // expiry
+    let sh = share_of(&p, vec![f.clone()], Duration::from_millis(1200), None).await;
+    assert_eq!(http(sh.port, &get(&format!("/{}/0", sh.token))).await.0, 200);
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert!(matches!(try_http(sh.port, &get(&format!("/{}/0", sh.token))).await, None | Some(404)), "expired link: 404, or the listener is already closed");
+    wait_until("listener closes when nothing is shared", || p.node.share_port().is_none()).await;
+    assert!(tokio::net::TcpStream::connect(("127.0.0.1", sh.port)).await.is_err(), "no open port while nothing is shared");
+    // revoke is immediate; a new link restarts the listener
+    let sh2 = share_of(&p, vec![f.clone()], Duration::from_secs(60), None).await;
+    assert_eq!(http(sh2.port, &get(&format!("/{}", sh2.token))).await.0, 200);
+    assert!(p.node.revoke_share(&sh2.token));
+    assert!(matches!(try_http(sh2.port, &get(&format!("/{}", sh2.token))).await, None | Some(404)), "revoked: 404, or the listener is already closed");
+    assert!(!p.node.revoke_share(&sh2.token));
+    // download limit: reserved while in flight, so two parallel downloads cannot both succeed with max 1
+    let big = random_file(src.path(), "big.bin", 6 * 1024 * 1024);
+    let sh3 = share_of(&p, vec![big.clone()], Duration::from_secs(60), Some(1)).await;
+    let url = get(&format!("/{}/0", sh3.token));
+    let (a, b) = tokio::join!(http(sh3.port, &url), http(sh3.port, &url));
+    let ok = [a.0, b.0].iter().filter(|s| **s == 200).count();
+    assert_eq!(ok, 1, "exactly one full download may succeed with a limit of 1");
+    let (st, _, _) = http(sh3.port, &url).await;
+    assert_eq!(st, 404, "the link ends once its limit is used");
+    assert!(p.node.list_shares().iter().all(|s| s.token != sh3.token));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn share_link_rate_limits_guessing_and_detects_changed_files() {
+    let p = plain();
+    let src = tempfile::tempdir().unwrap();
+    let f = random_file(src.path(), "doc.bin", 10_000);
+    let sh = share_of(&p, vec![f.clone()], Duration::from_secs(60), None).await;
+    // the file changes after it was shared: refuse rather than serve something else
+    std::fs::write(&f, b"different now").unwrap();
+    assert_eq!(http(sh.port, &get(&format!("/{}/0", sh.token))).await.0, 410);
+    let mut last = 0;
+    for _ in 0..20 { last = http(sh.port, &get("/zzzzzzzzz")).await.0; }
+    assert_eq!(last, 429, "repeated bad tokens from one address are blocked");
+    assert_eq!(http(sh.port, &get(&format!("/{}", sh.token))).await.0, 429, "the blocked address is locked out for a while");
 }

@@ -4,6 +4,7 @@ use flux_core::protocol::DeviceType;
 use flux_core::send::{self, Control, RetryPolicy, Target};
 use flux_core::store::{HistoryEntry, Settings, TrustedDevice};
 use flux_core::outbox::QueuedInfo;
+use flux_core::share::ShareInfo;
 use flux_core::FluxError;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -41,6 +42,7 @@ pub struct AppInfo {
     pub settings: Settings,
     pub trusted: Vec<TrustedView>,
     pub queued: Vec<QueuedInfo>,
+    pub shares: Vec<ShareView>,
     pub nearby: Vec<PeerDto>,
     pub lan_addrs: Vec<String>,
     pub discovery_active: bool,
@@ -49,6 +51,7 @@ pub struct AppInfo {
 #[derive(Serialize)]
 pub struct PairingDto {
     pub uri: String,
+    pub code: String,
     pub expires_in_secs: u64,
 }
 
@@ -62,6 +65,35 @@ pub struct SettingsPatch {
 
 fn e<T: std::fmt::Display>(err: T) -> String {
     err.to_string()
+}
+
+#[derive(Serialize)]
+pub struct ShareView {
+    pub token: String,
+    pub url: String,
+    pub expires_at: u64,
+    pub file_count: u32,
+    pub total_bytes: u64,
+    pub names: Vec<String>,
+    pub max_downloads: Option<u32>,
+    pub downloads: u32,
+}
+
+fn share_view(state: &AppState, s: &ShareInfo) -> ShareView {
+    let ip = lan_addrs(state.port).first().and_then(|a| a.rsplit_once(':').map(|x| x.0.to_string())).unwrap_or_default();
+    ShareView {
+        url: format!("http://{ip}:{}/{}", s.port, s.token),
+        token: s.token.clone(), expires_at: s.expires_at, file_count: s.file_count, total_bytes: s.total_bytes,
+        names: s.names.clone(), max_downloads: s.max_downloads, downloads: s.downloads,
+    }
+}
+
+#[derive(Serialize)]
+pub struct ReceivedFile {
+    pub rel: String,
+    pub name: String,
+    pub size: u64,
+    pub modified: u64,
 }
 
 #[tauri::command]
@@ -94,6 +126,7 @@ pub fn app_info(state: St) -> AppInfo {
         .collect();
     AppInfo {
         queued: node.queued(),
+        shares: node.list_shares().iter().map(|x| share_view(&state, x)).collect(),
         fingerprint: own,
         port: state.port,
         version: env!("CARGO_PKG_VERSION"),
@@ -145,7 +178,7 @@ pub fn clear_history(state: St) -> Result<(), String> {
 #[tauri::command]
 pub fn begin_pairing(state: St) -> PairingDto {
     let o = state.node.begin_pairing(state.port);
-    PairingDto { uri: o.uri, expires_in_secs: o.expires_in.as_secs() }
+    PairingDto { uri: o.uri, code: o.code, expires_in_secs: o.expires_in.as_secs() }
 }
 
 #[tauri::command]
@@ -289,4 +322,102 @@ pub fn respond_incoming(state: St, request_id: String, accept: bool) -> Result<(
 pub fn open_receive_folder(app: AppHandle, state: St) -> Result<(), String> {
     let dir = flux_core::paths::canonical_root(&state.node.store().settings().receive_dir).map_err(e)?;
     app.opener().open_path(dir.to_string_lossy(), None::<&str>).map_err(e)
+}
+
+/// Pair using the 9-character code. Candidates are the FLUX devices currently visible on the local network.
+#[tauri::command]
+pub async fn pair_with_code(state: St<'_>, code: String) -> Result<TrustedDevice, String> {
+    let cands: Vec<String> = state.peers.lock().unwrap().values().flat_map(|p| p.addrs.clone()).collect();
+    if cands.is_empty() {
+        return Err("No other FLUX device was found on your network. Open FLUX on it (same Wi-Fi), or pair with the full link instead.".into());
+    }
+    state.node.pair_with_code(&code, &cands).await.map_err(e)
+}
+
+/// Create a share link: a short URL anyone on the same network can open in a browser. The listener only exists while a link does.
+#[tauri::command]
+pub async fn create_share(state: St<'_>, paths: Vec<String>, ttl_secs: u64, max_downloads: Option<u32>) -> Result<ShareView, String> {
+    if paths.is_empty() {
+        return Err("Choose at least one file or folder.".into());
+    }
+    let files = send::collect(paths.into_iter().map(PathBuf::from).collect(), flux_core::Limits::default().max_files)
+        .await
+        .map_err(|err| match err {
+            FluxError::Limit(m) => m,
+            other => format!("Couldn't read the selection: {other}"),
+        })?;
+    let info = state.node.create_share(files, std::time::Duration::from_secs(ttl_secs.clamp(60, 7 * 24 * 3600)), max_downloads.filter(|m| *m > 0)).await.map_err(e)?;
+    Ok(share_view(&state, &info))
+}
+
+#[tauri::command]
+pub fn list_shares(state: St) -> Vec<ShareView> {
+    state.node.list_shares().iter().map(|x| share_view(&state, x)).collect()
+}
+
+#[tauri::command]
+pub fn revoke_share(state: St, token: String) -> bool {
+    state.node.revoke_share(&token)
+}
+
+/// Files in the receive folder (up to 3 levels deep, 2000 entries). Nothing outside the receive folder is ever listed.
+#[tauri::command]
+pub async fn list_received(state: St<'_>) -> Result<Vec<ReceivedFile>, String> {
+    let root = flux_core::paths::canonical_root(&state.node.store().settings().receive_dir).map_err(e)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut out = Vec::new();
+        let mut stack = vec![(root.clone(), 0usize)];
+        while let Some((dir, depth)) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for ent in rd.flatten() {
+                let name = ent.file_name().to_string_lossy().to_string();
+                let Ok(md) = std::fs::symlink_metadata(ent.path()) else { continue };
+                if md.file_type().is_symlink() || name == ".flux-partial" || name.ends_with(".fluxpart") {
+                    continue;
+                }
+                if md.is_dir() {
+                    if depth < 3 { stack.push((ent.path(), depth + 1)); }
+                } else if md.is_file() && out.len() < 2000 {
+                    let rel = ent.path().strip_prefix(&root).map(|r| r.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+                    let modified = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+                    out.push(ReceivedFile { rel, name, size: md.len(), modified });
+                }
+            }
+        }
+        out.sort_by(|a, b| b.modified.cmp(&a.modified));
+        out
+    })
+    .await
+    .map_err(e)
+}
+
+/// Resolve a path the UI gives us to a real file strictly inside the receive folder.
+fn resolve_received(state: &AppState, rel: &str) -> Result<PathBuf, String> {
+    if rel.is_empty() || rel.split(['/', '\\']).any(|c| c == ".." || c.is_empty()) || PathBuf::from(rel).is_absolute() {
+        return Err("That path isn't allowed.".into());
+    }
+    let root = flux_core::paths::canonical_root(&state.node.store().settings().receive_dir).map_err(e)?;
+    let p = std::fs::canonicalize(root.join(rel)).map_err(|_| "That file no longer exists.".to_string())?;
+    if !p.starts_with(&root) || !p.is_file() {
+        return Err("That path isn't allowed.".into());
+    }
+    Ok(p)
+}
+
+#[tauri::command]
+pub fn open_received(app: AppHandle, state: St, rel: String) -> Result<(), String> {
+    let p = resolve_received(&state, &rel)?;
+    // Files from other devices are untrusted: never launch anything that can run code. "Show in folder" is always available.
+    const RISKY: &[&str] = &["exe", "msi", "bat", "cmd", "com", "scr", "ps1", "vbs", "vbe", "js", "jse", "wsf", "lnk", "jar", "reg", "hta", "dll", "appx", "msix"];
+    let ext = p.extension().map(|x| x.to_string_lossy().to_lowercase()).unwrap_or_default();
+    if RISKY.contains(&ext.as_str()) {
+        return Err("For safety FLUX won't open this type of file. Use Show in folder instead.".into());
+    }
+    app.opener().open_path(p.to_string_lossy(), None::<&str>).map_err(e)
+}
+
+#[tauri::command]
+pub fn reveal_received(app: AppHandle, state: St, rel: String) -> Result<(), String> {
+    let p = resolve_received(&state, &rel)?;
+    app.opener().reveal_item_in_dir(p).map_err(e)
 }

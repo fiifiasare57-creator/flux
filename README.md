@@ -13,6 +13,13 @@ Secure, local-first file transfer between your devices. **Status: Milestone 2 (d
 ## Website
 `website/index.html` is the marketing page (see `website/README.md`). Set `DOWNLOAD_URL` once you have an installer.
 
+## What the desktop app does now
+Home (pairing panel with a real QR and a 9-character code, quick actions, recent transfers, stats and recent devices), Files (received files browser + active share links), Transfers, Devices, Settings.
+- **Pair** a phone by scanning the QR or typing the code (like K7M-2QX-9R4). Codes work once and expire in 2 minutes.
+- **Send Files** to a paired computer (direct) or a paired phone (queued; the phone receives when FLUX is open on it).
+- **Share Link** creates a short link (like http://192.168.1.20:47801/Xk3mP9qZa) that anyone on the same Wi-Fi can open in a browser. Not encrypted; expires; can be limited or stopped any time.
+- **Receive Files** shows where files land and who may send; everything arrives only after your approval (paired devices can be set to auto-accept).
+
 ## Desktop app (Tauri + React) — how to run it on Windows
 Extra prerequisite: Node.js 20+ (https://nodejs.org). WebView2 ships with Windows 11 (installer: https://developer.microsoft.com/microsoft-edge/webview2/).
 ```powershell

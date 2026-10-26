@@ -7,6 +7,7 @@
 //! failures. Only a hash of the token is retained in memory.
 
 use crate::error::{FluxError, Result};
+use hmac::{Hmac, Mac};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::sync::Mutex;
@@ -18,6 +19,7 @@ const MAX_FAILURES: u32 = 5;
 
 struct Active {
     token_hash: [u8; 32],
+    code: String,
     expires: Instant,
     failures: u32,
 }
@@ -27,6 +29,37 @@ pub struct PairingManager {
     active: Mutex<Option<Active>>,
 }
 
+/// 31 unambiguous characters (no I, L, O, 0, 1): 31^9 is about 44.6 bits.
+const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+fn gen_code() -> String {
+    let mut out = String::with_capacity(9);
+    let mut b = [0u8; 1];
+    while out.len() < 9 {
+        rand::rngs::OsRng.fill_bytes(&mut b);
+        if b[0] < 248 { // 248 = 31 * 8: rejection sampling keeps every character equally likely
+            out.push(CODE_ALPHABET[(b[0] % 31) as usize] as char);
+        }
+    }
+    out
+}
+
+/// "k7m-2qx-9r4" / "K7M 2QX 9R4" -> "K7M2QX9R4". None if it is not a valid code.
+pub fn normalize_code(s: &str) -> Option<String> {
+    let c: String = s.chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_uppercase()).collect();
+    (c.len() == 9 && c.bytes().all(|b| CODE_ALPHABET.contains(&b))).then_some(c)
+}
+
+pub fn format_code(c: &str) -> String {
+    if c.len() == 9 { format!("{}-{}-{}", &c[0..3], &c[3..6], &c[6..9]) } else { c.to_string() }
+}
+
+pub fn mac(code: &str, role: &str, pc_fp: &str, client_fp: &str) -> Hmac<Sha256> {
+    let mut m = <Hmac<Sha256> as Mac>::new_from_slice(code.as_bytes()).expect("hmac accepts any key length");
+    m.update(format!("flux-pair-v1|{role}|{pc_fp}|{client_fp}").as_bytes());
+    m
+}
+
 fn hash(token: &str) -> [u8; 32] {
     Sha256::digest(token.as_bytes()).into()
 }
@@ -34,12 +67,42 @@ fn hash(token: &str) -> [u8; 32] {
 impl PairingManager {
     /// Create a fresh token, replacing any previous one (only one offer is live at a time).
     pub fn create(&self, ttl: Duration) -> String {
+        self.create_pair(ttl).0
+    }
+
+    /// Fresh (long token for the QR link, short 9-character code for typing). Both die together.
+    pub fn create_pair(&self, ttl: Duration) -> (String, String) {
         let mut raw = [0u8; 32];
         rand::rngs::OsRng.fill_bytes(&mut raw);
         let token = hex::encode(raw);
+        let code = gen_code();
         *self.active.lock().unwrap() =
-            Some(Active { token_hash: hash(&token), expires: Instant::now() + ttl, failures: 0 });
-        token
+            Some(Active { token_hash: hash(&token), code: code.clone(), expires: Instant::now() + ttl, failures: 0 });
+        (token, code)
+    }
+
+    /// Verify a client's proof of the short code (constant-time) and return our proof for the client to check.
+    /// Single use; burned after repeated failures. The proofs are bound to both fingerprints, so a man in the
+    /// middle (whose certificate differs) can neither produce nor reuse them.
+    pub fn consume_code_proof(&self, client_proof_hex: &str, pc_fp: &str, client_fp: &str) -> Result<String> {
+        let mut g = self.active.lock().unwrap();
+        let fail = || FluxError::Pairing("invalid or expired pairing code".into());
+        let Some(a) = g.as_mut() else { return Err(fail()) };
+        if Instant::now() >= a.expires {
+            *g = None;
+            return Err(fail());
+        }
+        let given = hex::decode(client_proof_hex).unwrap_or_default();
+        if mac(&a.code, "client", pc_fp, client_fp).verify_slice(&given).is_ok() {
+            let server = hex::encode(mac(&a.code, "server", pc_fp, client_fp).finalize().into_bytes());
+            *g = None; // single use
+            return Ok(server);
+        }
+        a.failures += 1;
+        if a.failures >= MAX_FAILURES {
+            *g = None;
+        }
+        Err(fail())
     }
 
     /// Validate and consume a token. Single use; expired / wrong tokens fail identically.
@@ -125,6 +188,37 @@ impl PairingPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codes_are_nine_unambiguous_characters_and_normalise() {
+        let m = PairingManager::default();
+        let (_, c) = m.create_pair(DEFAULT_TTL);
+        assert_eq!(c.len(), 9);
+        assert!(c.bytes().all(|b| CODE_ALPHABET.contains(&b)));
+        assert_eq!(normalize_code(&format_code(&c).to_lowercase()).as_deref(), Some(c.as_str()));
+        assert!(normalize_code("K7M-2QX-9R").is_none() && normalize_code("K7M-2QX-9RO").is_none() && normalize_code("").is_none());
+        let seen: std::collections::HashSet<String> = (0..200).map(|_| m.create_pair(DEFAULT_TTL).1).collect();
+        assert!(seen.len() > 195, "codes must not repeat");
+    }
+
+    #[test]
+    fn code_proofs_are_bound_to_both_fingerprints_single_use_and_burn() {
+        let m = PairingManager::default();
+        let (_, code) = m.create_pair(DEFAULT_TTL);
+        let (pc, phone) = ("aa".repeat(32), "bb".repeat(32));
+        let good = hex::encode(mac(&code, "client", &pc, &phone).finalize().into_bytes());
+        // a proof made for a different PC certificate (man in the middle) is refused
+        let mitm = hex::encode(mac(&code, "client", &"cc".repeat(32), &phone).finalize().into_bytes());
+        assert!(m.consume_code_proof(&mitm, &pc, &phone).is_err());
+        assert!(m.consume_code_proof("zz", &pc, &phone).is_err());
+        let server = m.consume_code_proof(&good, &pc, &phone).unwrap();
+        assert_eq!(server, hex::encode(mac(&code, "server", &pc, &phone).finalize().into_bytes()));
+        assert!(m.consume_code_proof(&good, &pc, &phone).is_err(), "single use");
+        let (_, code2) = m.create_pair(DEFAULT_TTL);
+        for _ in 0..MAX_FAILURES { assert!(m.consume_code_proof("00", &pc, &phone).is_err()); }
+        let good2 = hex::encode(mac(&code2, "client", &pc, &phone).finalize().into_bytes());
+        assert!(m.consume_code_proof(&good2, &pc, &phone).is_err(), "burned after repeated failures");
+    }
 
     #[test]
     fn token_is_single_use() {

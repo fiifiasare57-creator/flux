@@ -31,6 +31,8 @@ pub struct Limits {
     pub presence_timeout: Duration,
     /// A claimed outbox item returns to the queue if its claim is not refreshed within this window.
     pub claim_ttl: Duration,
+    /// Where the share-link HTTP listener binds (only while at least one link exists).
+    pub share_bind: SocketAddr,
 }
 
 impl Default for Limits {
@@ -46,6 +48,7 @@ impl Default for Limits {
             partial_max_age: Duration::from_secs(7 * 24 * 3600),
             presence_timeout: Duration::from_secs(15),
             claim_ttl: Duration::from_secs(60),
+            share_bind: "0.0.0.0:47801".parse().unwrap(),
         }
     }
 }
@@ -93,6 +96,7 @@ pub struct Node {
     incoming: Mutex<HashMap<String, IncomingEntry>>,
     serial: AtomicU64,
     pub(crate) claim_seq: AtomicU64,
+    pub(crate) shares: crate::share::ShareHub,
     pub(crate) seen: Mutex<HashMap<String, u64>>,
     pub(crate) outbox: Mutex<HashMap<String, Vec<crate::outbox::OutItem>>>,
 }
@@ -123,6 +127,8 @@ impl Drop for IncomingGuard {
 
 pub struct PairingOffer {
     pub uri: String,
+    /// Short code to type instead of scanning, e.g. "K7M-2QX-9R4". Same lifetime and single use as the link.
+    pub code: String,
     pub expires_in: Duration,
 }
 
@@ -162,6 +168,7 @@ impl Node {
             incoming: Mutex::new(HashMap::new()),
             serial: AtomicU64::new(1),
             claim_seq: AtomicU64::new(1),
+            shares: Default::default(),
             seen: Mutex::new(HashMap::new()),
             outbox: Mutex::new(HashMap::new()),
         })
@@ -235,9 +242,9 @@ impl Node {
     /// Create a short-lived pairing link/QR payload for the given reachable addresses.
     pub fn begin_pairing_with_addrs(&self, addrs: Vec<String>, ttl: Option<Duration>) -> PairingOffer {
         let ttl = ttl.unwrap_or(DEFAULT_TTL);
-        let token = self.pairing.create(ttl);
+        let (token, code) = self.pairing.create_pair(ttl);
         let uri = PairingPayload { addrs, fingerprint: self.fingerprint().to_string(), token, host_name: self.device_name() }.to_uri();
-        PairingOffer { uri, expires_in: ttl }
+        PairingOffer { uri, code: crate::pairing::format_code(&code), expires_in: ttl }
     }
 
     pub fn begin_pairing(&self, port: u16) -> PairingOffer {
@@ -258,6 +265,43 @@ impl Node {
         Err(last)
     }
 
+    /// Pair using the short code shown on the other device, trying each candidate address (e.g. devices found on the
+    /// LAN). The other device is authenticated by its proof of the code, which is bound to its certificate.
+    pub async fn pair_with_code(&self, code: &str, candidates: &[String]) -> Result<TrustedDevice> {
+        let code = crate::pairing::normalize_code(code)
+            .ok_or_else(|| FluxError::Pairing("enter the 9-character code shown on the other device".into()))?;
+        let mut last = FluxError::Pairing("no device on your network accepted this code".into());
+        for addr in candidates {
+            match self.pair_code_once(addr, &code).await {
+                Ok(d) => return Ok(d),
+                Err(e) => last = e,
+            }
+        }
+        Err(last)
+    }
+
+    async fn pair_code_once(&self, addr: &str, code: &str) -> Result<TrustedDevice> {
+        use crate::pairing::mac;
+        use hmac::Mac;
+        let (mut s, pc_fp) = tls::connect_unpinned(&self.identity, addr, self.limits.handshake_timeout).await?;
+        let me = self.fingerprint().to_string();
+        write_msg(&mut s, &Msg::Hello { proto: PROTO_VERSION, device_name: self.device_name(), device_type: DeviceType::Desktop, purpose: Purpose::PairCode, token: None }).await?;
+        write_msg(&mut s, &Msg::PairCode { proof: hex::encode(mac(code, "client", &pc_fp, &me).finalize().into_bytes()) }).await?;
+        match read_msg(&mut s, self.limits.handshake_timeout).await? {
+            Msg::PairOk { device_name, device_type, proof } => {
+                let given = hex::decode(proof.unwrap_or_default()).unwrap_or_default();
+                if mac(code, "server", &pc_fp, &me).verify_slice(&given).is_err() {
+                    return Err(FluxError::Pairing("that device could not prove it knows the code, so it was not trusted".into()));
+                }
+                let dev = TrustedDevice { fingerprint: pc_fp, name: clean_name(&device_name), device_type, paired_at: unix_now(), last_addr: Some(addr.to_string()) };
+                self.store.add_trusted(dev.clone())?;
+                Ok(dev)
+            }
+            Msg::Error { message } => Err(FluxError::Pairing(message)),
+            _ => Err(FluxError::Protocol("unexpected reply to pairing".into())),
+        }
+    }
+
     async fn pair_once(&self, addr: &str, p: &PairingPayload) -> Result<TrustedDevice> {
         let mut s = tls::connect(&self.identity, addr, &p.fingerprint, self.limits.handshake_timeout).await?;
         write_msg(&mut s, &Msg::Hello {
@@ -268,7 +312,7 @@ impl Node {
             token: Some(p.token.clone()),
         }).await?;
         match read_msg(&mut s, self.limits.handshake_timeout).await? {
-            Msg::PairOk { device_name, device_type } => {
+            Msg::PairOk { device_name, device_type, .. } => {
                 let dev = TrustedDevice {
                     fingerprint: p.fingerprint.clone(),
                     name: clean_name(&device_name),
@@ -341,6 +385,23 @@ impl Node {
                 crate::outbox::serve_fetch(&self, &mut s, &peer).await;
                 Ok(())
             }
+            Purpose::PairCode => {
+                let Msg::PairCode { proof } = read_msg(&mut s, hs).await? else {
+                    return Err(FluxError::Protocol("expected a pairing proof".into()));
+                };
+                match self.pairing.consume_code_proof(&proof, self.fingerprint(), &fp) {
+                    Ok(server_proof) => {
+                        let fp_copy = fp.clone();
+                        self.store.add_trusted(TrustedDevice { fingerprint: fp, name: clean_name(&device_name), device_type, paired_at: unix_now(), last_addr: None })?;
+                        self.touch(&fp_copy);
+                        write_msg(&mut s, &Msg::PairOk { device_name: self.device_name(), device_type: DeviceType::Desktop, proof: Some(server_proof) }).await
+                    }
+                    Err(e) => {
+                        let _ = write_msg(&mut s, &Msg::Error { message: e.to_string() }).await;
+                        Err(e)
+                    }
+                }
+            }
             Purpose::Pair => {
                 match self.pairing.consume(token.as_deref().unwrap_or("")) {
                     Ok(()) => {
@@ -353,7 +414,7 @@ impl Node {
                             last_addr: None,
                         })?;
                         self.touch(&fp_copy);
-                        write_msg(&mut s, &Msg::PairOk { device_name: self.device_name(), device_type: DeviceType::Desktop }).await
+                        write_msg(&mut s, &Msg::PairOk { device_name: self.device_name(), device_type: DeviceType::Desktop, proof: None }).await
                     }
                     Err(e) => {
                         let _ = write_msg(&mut s, &Msg::Error { message: e.to_string() }).await;

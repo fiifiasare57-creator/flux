@@ -8,11 +8,13 @@ export type Outcome = "completed" | "failed" | "cancelled" | "rejected";
 
 export interface Settings { device_name: string; receive_dir: string; require_approval_for_trusted: boolean; discoverable: boolean }
 export interface Trusted { fingerprint: string; name: string; device_type: DeviceType; paired_at: number; last_addr: string | null; online: boolean; last_seen: number | null }
+export interface ShareView { token: string; url: string; expires_at: number; file_count: number; total_bytes: number; names: string[]; max_downloads: number | null; downloads: number }
+export interface ReceivedFile { rel: string; name: string; size: number; modified: number }
 export interface Queued { transfer_id: string; peer_fingerprint: string; peer_name: string; file_count: number; total_bytes: number; names: string[]; created: number; state: "queued" | "claimed" }
 export interface Nearby { fingerprint: string; name: string; device_type: DeviceType; addrs: string[]; paired: boolean }
 export interface AppInfo {
   fingerprint: string; port: number; version: string; settings: Settings; trusted: Trusted[];
-  nearby: Nearby[]; queued: Queued[]; lan_addrs: string[]; discovery_active: boolean;
+  nearby: Nearby[]; queued: Queued[]; shares: ShareView[]; lan_addrs: string[]; discovery_active: boolean;
 }
 export interface Progress {
   transfer_id: string; direction: "sent" | "received"; peer_name: string; state: TState; file_name: string;
@@ -35,7 +37,14 @@ export const api = {
   updateSettings: (patch: PatchSettings) => invoke<Settings>("update_settings", { patch }),
   history: () => invoke<HistoryEntry[]>("history"),
   clearHistory: () => invoke<void>("clear_history"),
-  beginPairing: () => invoke<{ uri: string; expires_in_secs: number }>("begin_pairing"),
+  beginPairing: () => invoke<{ uri: string; code: string; expires_in_secs: number }>("begin_pairing"),
+  pairWithCode: (code: string) => invoke<Trusted>("pair_with_code", { code }),
+  createShare: (paths: string[], ttlSecs: number, maxDownloads: number | null) => invoke<ShareView>("create_share", { paths, ttlSecs, maxDownloads }),
+  listShares: () => invoke<ShareView[]>("list_shares"),
+  revokeShare: (token: string) => invoke<boolean>("revoke_share", { token }),
+  listReceived: () => invoke<ReceivedFile[]>("list_received"),
+  openReceived: (rel: string) => invoke<void>("open_received", { rel }),
+  revealReceived: (rel: string) => invoke<void>("reveal_received", { rel }),
   pairWith: (uri: string) => invoke<Trusted>("pair_with", { uri }),
   revoke: (fingerprint: string) => invoke<boolean>("revoke", { fingerprint }),
   sendTo: (fingerprint: string, paths: string[]) => invoke<string>("send_to", { fingerprint, paths }),

@@ -1,50 +1,61 @@
 ﻿name: Build FLUX for Android
 
 on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
-    paths:
-      - "android/**"
-      - ".github/workflows/android.yml"
+workflow_dispatch:
+push:
+branches:
+- main
+paths:
+- "android/**"
+- ".github/workflows/android.yml"
 
 permissions:
-  contents: read
+contents: read
 
 jobs:
-  android:
-    name: Build FLUX Android APK
-    runs-on: ubuntu-latest
+android:
+name: Build FLUX Android APK
+runs-on: ubuntu-latest
+timeout-minutes: 30
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v5
+```
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
 
-      - name: Set up Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
+  - name: Set up Java
+    uses: actions/setup-java@v5
+    with:
+      distribution: temurin
+      java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4
+  - name: Set up Android SDK
+    uses: android-actions/setup-android@v3
 
-      - name: Install Android platform and build tools
-        run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
+  - name: Install Android platform and build tools
+    run: sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Make Gradle wrapper executable
-        run: chmod +x android/gradlew
+  - name: Set up Gradle
+    uses: gradle/actions/setup-gradle@v4
 
-      - name: Build FLUX Android APK
-        working-directory: android
-        run: ./gradlew assembleDebug --no-daemon --stacktrace
+  - name: Check typography and spacing rules
+    working-directory: android
+    run: python3 tools/design_lint.py
 
-      - name: Upload Android APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: flux-android-apk
-          path: android/app/build/outputs/apk/debug/*.apk
-          if-no-files-found: error
-          retention-days: 14
+  - name: Make the Gradle wrapper executable
+    working-directory: android
+    run: chmod +x gradlew
+
+  - name: Build FLUX Android APK
+    working-directory: android
+    run: ./gradlew assembleDebug --no-daemon --stacktrace
+
+  - name: Upload Android APK
+    uses: actions/upload-artifact@v4
+    with:
+      name: flux-android-apk
+      path: android/app/build/outputs/apk/debug/*.apk
+      if-no-files-found: error
+      retention-days: 14
+```
 

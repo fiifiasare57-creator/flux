@@ -12,7 +12,7 @@ const KINDS = {
   phone: { src: phoneImg, s: spec.phone, inset: { l: 0.022, r: 0.022, t: 0.012, b: 0.012 }, design: { w: 390, h: 868 }, radius: "13.5% / 6%", alt: "Black smartphone showing the FLUX mobile app" },
 } as const;
 
-function Device({ kind, children, label }: { kind: keyof typeof KINDS; children: ReactNode; label: string }) {
+export function Device({ kind, children, label }: { kind: keyof typeof KINDS; children: ReactNode; label: string }) {
   const k = KINDS[kind], r = k.s.screen;
   const box = { left: r.left + r.width * k.inset.l, top: r.top + r.height * k.inset.t, width: r.width * (1 - k.inset.l - k.inset.r), height: r.height * (1 - k.inset.t - k.inset.b) };
   const ref = useRef<HTMLDivElement>(null);
@@ -40,7 +40,7 @@ function Device({ kind, children, label }: { kind: keyof typeof KINDS; children:
 const NAV = ["Share", "Devices", "Activity", "Settings"];
 
 /** The real desktop app, miniaturised: same nav, same status line, same device names. */
-function LaptopScreen({ ready, names }: { ready: boolean; names: string[] }) {
+export function LaptopScreen({ ready, names }: { ready: boolean; names: string[] }) {
   return (
     <div className="ms-desktop">
       <div className="ms-side"><div className="ms-brand"><img src={logo} alt="" /><b>FLUX</b></div>{NAV.map((n, i) => <div key={n} className={i === 0 ? "ms-nav on" : "ms-nav"}>{n}</div>)}</div>
@@ -56,7 +56,7 @@ function LaptopScreen({ ready, names }: { ready: boolean; names: string[] }) {
 }
 
 /** The real Android home screen, miniaturised (header, paired-PC card, actions, live progress). */
-function PhoneScreen({ pcName, paired, online, progress }: { pcName: string; paired: boolean; online: boolean; progress: { pct: number; file: string } | null }) {
+export function PhoneScreen({ pcName, paired, online, progress }: { pcName: string; paired: boolean; online: boolean; progress: { pct: number; file: string } | null }) {
   return (
     <div className="ms-phone">
       <div className="ms-hero"><div className="ms-brandrow"><img src={logo} alt="" /><b>FLUX</b></div><div className="ms-head">Your files,<br />in motion.</div></div>
@@ -72,8 +72,8 @@ function PhoneScreen({ pcName, paired, online, progress }: { pcName: string; pai
 
 export type LinkState = "none" | "waiting" | "paired" | "connected" | "sending" | "receiving";
 
-/** Phone <-> laptop visual. Every state below is derived from real application state, never decorative. */
-export default function DeviceConnection({ waitingForScan = false, compact = false }: { waitingForScan?: boolean; compact?: boolean }) {
+/** Everything the device visuals need, derived from real state. Never decorative. */
+export function usePhoneLink(waitingForScan = false) {
   const { info, live } = useFlux();
   if (!info) return null;
   const phones = info.trusted.filter((t) => t.device_type === "phone" || t.device_type === "tablet").sort((a, b) => (b.last_seen ?? 0) - (a.last_seen ?? 0) || b.paired_at - a.paired_at);
@@ -91,6 +91,15 @@ export default function DeviceConnection({ waitingForScan = false, compact = fal
     sending: pct !== null ? `Sending to phone · ${pct}%` : "Sending to phone…", receiving: pct !== null ? `Receiving from phone · ${pct}%` : "Receiving from phone…",
   };
   const names = [...info.nearby.map((n) => n.name), ...info.trusted.filter((t) => !info.nearby.some((n) => n.fingerprint === t.fingerprint)).map((t) => t.name)];
+  return { info, phone, active, pct, state, ready, labels, names, waitingPickup };
+}
+
+
+/** Phone <-> laptop visual with the connection between them. */
+export default function DeviceConnection({ waitingForScan = false, compact = false }: { waitingForScan?: boolean; compact?: boolean }) {
+  const k = usePhoneLink(waitingForScan);
+  if (!k) return null;
+  const { info, phone, active, pct, state, ready, labels, names, waitingPickup } = k;
   return (
     <div className={`dc ${compact ? "compact" : ""}`}>
       <div className="dc-phone"><Device kind="phone" label={phone ? `${phone.name}: ${state === "connected" ? "connected" : "not connected"}` : "No phone paired"}>

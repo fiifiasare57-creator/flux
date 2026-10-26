@@ -36,7 +36,8 @@ fn key_and_cert(id: &Identity) -> (Vec<CertificateDer<'static>>, PrivateKeyDer<'
 
 #[derive(Debug)]
 struct PinnedServer {
-    fp: String,
+    /// None = accept any certificate (only used by short-code pairing, which authenticates via the code instead).
+    fp: Option<String>,
     algs: WebPkiSupportedAlgorithms,
 }
 
@@ -49,7 +50,7 @@ impl ServerCertVerifier for PinnedServer {
         _ocsp: &[u8],
         _now: UnixTime,
     ) -> std::result::Result<ServerCertVerified, rustls::Error> {
-        if fingerprint_of(end_entity.as_ref()) == self.fp {
+        if self.fp.as_ref().is_none_or(|f| fingerprint_of(end_entity.as_ref()) == *f) {
             Ok(ServerCertVerified::assertion())
         } else {
             Err(rustls::Error::General("peer fingerprint does not match pinned identity".into()))
@@ -107,7 +108,7 @@ pub fn acceptor(id: &Identity) -> Result<TlsAcceptor> {
     Ok(TlsAcceptor::from(Arc::new(cfg)))
 }
 
-fn connector(id: &Identity, expected_fp: &str) -> Result<TlsConnector> {
+fn connector(id: &Identity, expected_fp: Option<&str>) -> Result<TlsConnector> {
     let p = provider();
     let algs = p.signature_verification_algorithms;
     let (certs, key) = key_and_cert(id);
@@ -115,7 +116,7 @@ fn connector(id: &Identity, expected_fp: &str) -> Result<TlsConnector> {
         .with_protocol_versions(&[&rustls::version::TLS13])
         .map_err(tls_err)?
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(PinnedServer { fp: expected_fp.to_ascii_lowercase(), algs }))
+        .with_custom_certificate_verifier(Arc::new(PinnedServer { fp: expected_fp.map(|f| f.to_ascii_lowercase()), algs }))
         .with_client_auth_cert(certs, key)
         .map_err(tls_err)?;
     Ok(TlsConnector::from(Arc::new(cfg)))
@@ -130,7 +131,7 @@ pub async fn connect(id: &Identity, addr: &str, expected_fp: &str, timeout: Dura
         let tcp = TcpStream::connect(addr).await?;
         tcp.set_nodelay(true).ok();
         let name = ServerName::try_from("flux.local").map_err(tls_err)?;
-        connector(id, expected_fp)?.connect(name, tcp).await.map_err(tls_err)
+        connector(id, Some(expected_fp))?.connect(name, tcp).await.map_err(tls_err)
     };
     tokio::time::timeout(timeout, fut).await.map_err(|_| FluxError::Timeout("connecting"))?
 }
@@ -143,4 +144,19 @@ pub fn client_fingerprint(s: &ServerStream) -> Result<String> {
         .and_then(|c| c.first())
         .map(|c| fingerprint_of(c.as_ref()))
         .ok_or_else(|| FluxError::Tls("peer presented no certificate".into()))
+}
+
+/// Connect WITHOUT pinning and report the server's fingerprint. Only for short-code pairing: the caller MUST then
+/// verify the server's proof of the code, which is bound to this fingerprint (that is what authenticates the server).
+pub async fn connect_unpinned(id: &Identity, addr: &str, timeout: Duration) -> Result<(ClientStream, String)> {
+    let fut = async {
+        let tcp = TcpStream::connect(addr).await?;
+        tcp.set_nodelay(true).ok();
+        let name = ServerName::try_from("flux.local").map_err(tls_err)?;
+        let s = connector(id, None)?.connect(name, tcp).await.map_err(tls_err)?;
+        let fp = s.get_ref().1.peer_certificates().and_then(|c| c.first()).map(|c| fingerprint_of(c.as_ref()))
+            .ok_or_else(|| FluxError::Tls("server presented no certificate".into()))?;
+        Ok::<_, FluxError>((s, fp))
+    };
+    tokio::time::timeout(timeout, fut).await.map_err(|_| FluxError::Timeout("connecting"))?
 }

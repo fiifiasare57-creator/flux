@@ -29,6 +29,9 @@ Everything shown is real: "Connected" only when the PC answered a check a moment
 Not like the picture on purpose: the Send screen uses Android's own file picker for each tab instead of reading your whole gallery (no storage permission needed), and shows what you picked as a grid.
 **Not yet verified on a real phone.** It compiles against the Android 34 framework and its protocol code is tested, but nobody has seen these screens running. Expect visual fixes; send screenshots.
 
+## Typography
+See TYPOGRAPHY.md. One type scale and one spacing scale live in Ui.java; `python tools/design_lint.py` enforces them (the build workflow runs it).
+
 ## Building the APK (GitHub Actions)
 `.github/workflows/android.yml` ("Build FLUX for Android") runs on push to main when `android/**` changes, or from the Actions tab (Run workflow). It installs Java 17, the Android SDK (platform 34 + build tools), and builds with the Gradle wrapper included in `android/` (`./gradlew assembleDebug`). The APK is the artifact `flux-android-apk` (kept 14 days).
 `.github/workflows/windows.yml` ("Build FLUX for Windows") builds the Tauri installer: artifact `flux-windows-installer` (NSIS .exe). The build output of this project is in `target/` at the repo root (it is a Cargo workspace), not `src-tauri/target`.

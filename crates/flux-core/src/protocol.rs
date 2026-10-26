@@ -35,6 +35,8 @@ pub enum Purpose {
     Transfer,
     /// A paired device (e.g. a phone) asks the computer for files queued for it.
     Fetch,
+    /// Pair using the short typed code instead of the QR link (proof-of-knowledge bound to both identities).
+    PairCode,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]
@@ -61,7 +63,9 @@ pub struct ResumeInfo {
 #[serde(tag = "t", rename_all = "snake_case")]
 pub enum Msg {
     Hello { proto: u32, device_name: String, device_type: DeviceType, purpose: Purpose, token: Option<String> },
-    PairOk { device_name: String, device_type: DeviceType },
+    PairOk { device_name: String, device_type: DeviceType, #[serde(default)] proof: Option<String> },
+    /// Client's proof that it knows the pairing code: HMAC-SHA256(code, role|pc_fp|client_fp).
+    PairCode { proof: String },
     Offer { transfer_id: String, files: Vec<FileMeta> },
     Accept { resume: Vec<ResumeInfo> },
     Reject { reason: String },

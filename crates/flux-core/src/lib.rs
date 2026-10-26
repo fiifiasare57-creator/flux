@@ -12,6 +12,7 @@ pub mod paths;
 pub mod protocol;
 pub mod receive;
 pub mod send;
+pub mod share;
 pub mod store;
 pub mod tls;
 

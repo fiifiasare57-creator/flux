@@ -1,15 +1,6 @@
 target/
 node_modules/
 dist/
-
-# Environment variables and secrets
-.env
-.env.*
-!.env.example
-
-# Private keys
 *.pem
 *.key
-
-# FLUX local data
 .flux-data/
